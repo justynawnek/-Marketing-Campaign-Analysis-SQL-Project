@@ -26,6 +26,324 @@ This project is designed to analyze marketing campaign data from Facebook and Go
 
 ### 1. Campaign Performance Analysis
 **Objective:** Calculate KPIs such as CPC, CPM, CTR, and ROMI for each campaign on a daily basis.
+
 **Query:** Aggregates spend, impressions, clicks, and value for each campaign and calculates key performance metrics.
 ```sql
-[Insert Campaign Performance Analysis Query Here]
+-- Campaign Performance Analysis Query
+SELECT ad_date , campaign_id, 
+		sum (spend)																	as total_spend, 
+		sum (impressions)															as total_impressions,
+		sum (value)																	as total_value,
+		sum (clicks)																as total_clicks,
+		sum  (spend) / nullif(sum (clicks),0) 										as CPC,
+		(sum (spend) * 1000) / nullif (sum (impressions), 0) 						as CPM,
+		round (((1.0*sum (clicks) / nullif(sum (impressions), 0))*100), 3)			as CTR,
+		round(((1.0*sum (value) - sum (spend)) /nullif (sum (spend),0))*100, 3) 	as ROMI
+FROM public.facebook_ads_basic_daily
+group by ad_date, campaign_id;
+
+-- Top Campaign
+select campaign_id,												
+		sum (spend) 																as total_spend,
+		round(((1.0*sum (value) - sum (spend)) /nullif (sum (spend),0))*100, 3) 	as ROMI
+FROM public.facebook_ads_basic_daily
+group by campaign_id
+having sum (spend)>500000
+order by ROMI desc
+sql'''
+
+### 2. Top Campaign and Ad Set Identification
+**Objective:** Identify the top-performing campaigns and ad sets based on ROMI, filtering out low-spending campaigns.
+
+**Query:** Filters campaigns and ad sets with spend over 500,000 and ranks them by ROMI.
+```sql
+-- Media Source Comparison Query
+select ad_date,
+		media_source,
+		campaign_name,
+		adset_name,
+		sum (spend)																	as total_spend, 
+		sum (impressions)															as total_impressions,
+		sum (value)																	as total_value,
+		sum (clicks)																as total_clicks
+from (select *
+		from (SELECT ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+			when url_parameters like '%google%'
+				then 'google'
+				else 'facebook'	
+		end )																					as media_source
+		from public.facebook_ads_basic_daily a
+		inner join public.facebook_adset b on b.adset_id=a.adset_id 
+		inner join public.facebook_campaign c on c.campaign_id=a.campaign_id)					as facebook
+	union 
+	select ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )																				as media_source
+	from public.google_ads_basic_daily)															as g_and_f
+group by ad_date, media_source, campaign_name, adset_name
+order by ad_date, media_source, campaign_name, adset_name;
+
+
+
+-- Top Ad Set Query
+select adset_name,
+		sum (spend)																	as total_spend, 
+		round(((1.0* sum (value)- sum (spend)) /nullif (sum(spend),0))*100, 3) 		as ROMI
+from (select * 
+		from(SELECT ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+			when url_parameters like '%google%'
+				then 'google'
+				else 'facebook'	
+		end )																					as media_source
+		from public.facebook_ads_basic_daily a
+		inner join public.facebook_adset b on b.adset_id=a.adset_id 
+		inner join public.facebook_campaign c on c.campaign_id=a.campaign_id)					as facebook
+	union 
+	select ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )																				as media_source
+	from public.google_ads_basic_daily)															as g_and_f
+group by adset_name
+having sum (spend)>500000
+order by ROMI desc;
+
+### 3. UTM Campaign Analysis
+**Objective:** Analyze the performance of campaigns based on UTM parameters in the URL.
+
+**Query:** Decodes UTM parameters and calculates KPIs for each campaign.
+```sql
+-- UTM Campaign Analysis Query
+with fb_and_google as
+	(select ad_date
+		,url_parameters
+		,(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )																					as media_source
+		,coalesce(spend, 0)																			as spend
+		,coalesce(impressions, 0)																	as impressions
+		,coalesce(reach, 0)																			as reach
+		,coalesce(clicks, 0)																		as clicks
+		,coalesce(leads, 0)																			as leads
+		,coalesce(value, 0)																			as value
+	from public.facebook_ads_basic_daily 														
+	union
+	select ad_date
+		,url_parameters
+		,(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )																					as media_source
+		,coalesce(spend, 0)																			as spend
+		,coalesce(impressions, 0)																	as impressions
+		,coalesce(reach, 0)																			as reach
+		,coalesce(clicks, 0)																		as clicks
+		,coalesce(leads, 0)																			as leads
+		,coalesce(value, 0)																			as value
+	from public.google_ads_basic_daily)
+SELECT ad_date
+		,media_source
+		,(CASE
+            WHEN (substring(url_parameters, 'utm_campaign=([^&]+)')) = 'nan' THEN NULL
+            ELSE LOWER(substring(url_parameters, '(?<=utm_campaign=)[^&]+'))
+        end) 																						as utm_campaign
+		,sum (spend)																				as total_spend 
+		,sum (impressions)																			as total_impressions
+		,sum (value)																				as total_value
+		,sum (clicks)																				as total_clicks
+		,(case
+			when sum (clicks) = 0 then 0
+			else sum  (spend) / sum (clicks)
+		end	)																						as CPC
+		,(case
+			when sum (impressions) = 0 then 0
+			else sum (spend) * 1000 / sum (impressions)
+		end	)																						as CPM
+		,(case
+			when sum (clicks) = 0 then 0
+			else round (((1.0*sum (clicks) / sum (impressions))*100), 3)
+		end	)																						as CTR
+		,(case
+			when sum (spend) = 0 then 0
+			else round(((1.0*sum (value) - sum (spend)) /sum (spend)*100), 3) 
+		end	)																						as ROMI
+from fb_and_google
+group by ad_date, media_source, utm_campaign
+order by ad_date, media_source;
+
+### 4. Monthly Difference Analysis
+**Objective:** Track the month-over-month changes in CPC, CPM, CTR, and ROMI for each UTM campaign.
+
+**Query:** Calculates the percentage difference in performance metrics from one month to the next.
+```sql
+-- Monthly Difference Analysis Query
+WITH fb_and_google AS 
+(
+    SELECT
+        ad_date,
+        url_parameters,
+        COALESCE(spend, 0) 																			AS spend,
+        COALESCE(impressions, 0) 																	AS impressions,
+        COALESCE(reach, 0) 																			AS reach,
+        COALESCE(clicks, 0) 																		AS clicks,
+        COALESCE(leads, 0) 																			AS leads,
+        COALESCE(value, 0) 																			AS value
+    FROM public.facebook_ads_basic_daily
+    
+    UNION ALL
+    
+    SELECT
+        ad_date,
+        url_parameters,
+        COALESCE(spend, 0) 																			AS spend,
+        COALESCE(impressions, 0) 																	AS impressions,
+        COALESCE(reach, 0) 																			AS reach,
+        COALESCE(clicks, 0) 																		AS clicks,
+        COALESCE(leads, 0) 																			AS leads,
+        COALESCE(value, 0) 																			AS value
+    FROM public.google_ads_basic_daily
+), 
+monthly_difference AS 
+(
+    SELECT
+        to_char(date_trunc('month', ad_date), 'YYYY-MM')											AS ad_month,
+        (CASE
+            WHEN (substring(url_parameters, 'utm_campaign=([^&]+)')) = 'nan' THEN NULL
+            ELSE LOWER(substring(url_parameters, '(?<=utm_campaign=)[^&]+'))
+        end) 																						AS utm_campaign,
+        SUM(spend) 																					AS total_spend,
+        SUM(impressions) 																			AS total_impressions,
+        SUM(value) 																					AS total_value,
+        SUM(clicks) 																				AS total_clicks,
+        (CASE
+            WHEN SUM(clicks) = 0 THEN 0
+            ELSE SUM(spend) / SUM(clicks)
+        end) 																						AS CPC,
+        (CASE
+            WHEN SUM(impressions) = 0 THEN 0
+            ELSE SUM(spend) * 1000 / SUM(impressions)
+        end) 																						AS CPM,
+        (CASE
+            WHEN SUM(impressions) = 0 THEN 0
+            ELSE ROUND((1.0*SUM(clicks) / SUM(impressions)) * 100, 2)
+        end) 																						AS CTR,
+        (CASE
+            WHEN SUM(spend) = 0 THEN 0
+            ELSE ROUND(((1.0*SUM(value) - SUM(spend)) / SUM(spend)) * 100, 2)
+        end) 																						AS ROMI
+    FROM fb_and_google
+    GROUP BY ad_month, utm_campaign
+)SELECT
+    ad_month,
+    utm_campaign,
+    total_spend,
+    total_impressions,
+    total_value,
+    total_clicks,
+    CPC,
+    (CPC - LAG(CPC, 1) OVER (PARTITION BY utm_campaign order by ad_month)) * 100 / nullif (LAG(CPC, 1) OVER (PARTITION BY utm_campaign order by ad_month),0) 				AS percent_CPC_diff,
+    CPM,
+    (CPM - LAG(CPM, 1) OVER (PARTITION BY utm_campaign order by ad_month)) * 100 / nullif (LAG(CPM, 1) OVER (PARTITION BY utm_campaign order by ad_month),0) 				AS percent_CPM_diff,
+    CTR,
+    round((CTR - LAG(CTR, 1) OVER (PARTITION BY utm_campaign order by ad_month)) * 100 / nullif (LAG(CTR, 1) OVER (PARTITION BY utm_campaign order by ad_month),0),2) 		AS percent_CTR_diff,
+    ROMI,
+    round ((ROMI - LAG(ROMI, 1) OVER (PARTITION BY utm_campaign order by ad_month)) * 100 / nullif (LAG(ROMI, 1) OVER (PARTITION BY utm_campaign order by ad_month),0),2) 	AS percent_ROMI_diff
+FROM monthly_difference
+
+### 5. Campaign and Ad Set Trend Analysis
+**Objective:** Identify trends in spend, impressions, clicks, and value over time for specific campaigns and ad sets.
+
+**Query:** Calculates the month-over-month changes in performance metrics for each campaign and ad set.
+```sql
+-- Campaign and Ad Set Trend Analysis Query
+WITH campaign_trends AS (
+    SELECT campaign_name,
+           adset_name,
+           ad_date,
+           EXTRACT(MONTH FROM ad_date) AS month,
+           EXTRACT(YEAR FROM ad_date)  AS year,
+           sum(spend)                  AS total_spend,
+           sum(impressions)            AS total_impressions,
+           sum(clicks)                 AS total_clicks,
+           sum(value)                  AS total_value
+    FROM public.facebook_ads_basic_daily a
+    INNER JOIN public.facebook_adset b ON b.adset_id = a.adset_id
+    INNER JOIN public.facebook_campaign c ON c.campaign_id = a.campaign_id
+    GROUP BY campaign_name, adset_name, ad_date, EXTRACT(MONTH FROM ad_date), EXTRACT(YEAR FROM ad_date)
+)SELECT campaign_name,
+       adset_name,
+       year,
+       month,
+       total_spend,
+       total_impressions,
+       total_clicks,
+       total_value,
+       LAG(total_spend) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_spend,
+       LAG(total_impressions) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_impressions,
+       LAG(total_clicks) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_clicks,
+       LAG(total_value) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_value,
+       (total_spend - LAG(total_spend) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_spend) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS spend_change_pct,
+       (total_impressions - LAG(total_impressions) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_impressions) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS impressions_change_pct,
+       (total_clicks - LAG(total_clicks) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_clicks) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS clicks_change_pct,
+       (total_value - LAG(total_value) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_value) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS value_change_pct
+FROM campaign_trends
+ORDER BY campaign_name, adset_name, year, month;
+
+### 6. Performance Segmentation Analysis
+**Objective:** Segment data by campaign, ad set, and media source to identify the highest-performing segments.
+
+**Query:** Aggregates performance metrics for each segment and ranks them by ROMI.
+```sql
+-- Performance Segmentation Analysis Query
+WITH segmented_performance AS (
+    SELECT ad_date,
+           campaign_name,
+           adset_name,
+           (CASE
+                WHEN url_parameters LIKE '%google%' THEN 'google'
+                ELSE 'facebook'
+            END) AS media_source,
+           sum(spend)                AS total_spend,
+           sum(impressions)          AS total_impressions,
+           sum(clicks)               AS total_clicks,
+           sum(value)                AS total_value
+    FROM public.facebook_ads_basic_daily a
+    INNER JOIN public.facebook_adset b ON b.adset_id = a.adset_id
+    INNER JOIN public.facebook_campaign c ON c.campaign_id = a.campaign_id
+    GROUP BY ad_date, campaign_name, adset_name, media_source
+) SELECT campaign_name,
+       adset_name,
+       media_source,
+       sum(total_spend)             AS total_spend,
+       sum(total_impressions)       AS total_impressions,
+       sum(total_clicks)            AS total_clicks,
+       sum(total_value)             AS total_value,
+       (CASE
+            WHEN sum(total_clicks) = 0 THEN 0
+            ELSE sum(total_spend) / sum(total_clicks)
+        END)                        AS CPC,
+       (CASE
+            WHEN sum(total_impressions) = 0 THEN 0
+            ELSE sum(total_spend) * 1000 / sum(total_impressions)
+        END)                        AS CPM,
+       (CASE
+            WHEN sum(total_impressions) = 0 THEN 0
+            ELSE ROUND((1.0 * sum(total_clicks) / sum(total_impressions)) * 100, 3)
+        END)                        AS CTR,
+       (CASE
+            WHEN sum(total_spend) = 0 THEN 0
+            ELSE ROUND(((1.0 * sum(total_value) - sum(total_spend)) / sum(total_spend)) * 100, 3)
+        END)                        AS ROMI
+FROM segmented_performance
+GROUP BY campaign_name, adset_name, media_source
+ORDER BY ROMI DESC;
