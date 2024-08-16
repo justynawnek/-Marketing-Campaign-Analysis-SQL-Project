@@ -1,0 +1,22 @@
+-- Campaign Performance Analysis Query
+SELECT ad_date , 
+    campaign_id, 
+		sum (spend)	as total_spend, 
+		sum (impressions)	as total_impressions,
+		sum (value)	as total_value,
+		sum (clicks) as total_clicks,
+		sum  (spend) / nullif(sum (clicks),0) as CPC,
+		(sum (spend) * 1000) / nullif (sum (impressions), 0) as CPM,
+		round (((1.0*sum (clicks) / nullif(sum (impressions), 0))*100), 3) as CTR,
+		round(((1.0*sum (value) - sum (spend)) /nullif (sum (spend),0))*100, 3) as ROMI
+FROM public.facebook_ads_basic_daily
+group by ad_date, campaign_id;
+
+-- Top Campaign
+select campaign_id,												
+		sum (spend) as total_spend,
+		round(((1.0*sum (value) - sum (spend)) /nullif (sum (spend),0))*100, 3) 	as ROMI
+FROM public.facebook_ads_basic_daily
+group by campaign_id
+having sum (spend)>500000
+order by ROMI desc
