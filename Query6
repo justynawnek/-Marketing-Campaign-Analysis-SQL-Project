@@ -1,0 +1,43 @@
+-- Performance Segmentation Analysis Query
+WITH segmented_performance AS (
+    SELECT ad_date,
+           campaign_name,
+           adset_name,
+           (CASE
+                WHEN url_parameters LIKE '%google%' THEN 'google'
+                ELSE 'facebook'
+            END) AS media_source,
+           sum(spend)                AS total_spend,
+           sum(impressions)          AS total_impressions,
+           sum(clicks)               AS total_clicks,
+           sum(value)                AS total_value
+    FROM public.facebook_ads_basic_daily a
+    INNER JOIN public.facebook_adset b ON b.adset_id = a.adset_id
+    INNER JOIN public.facebook_campaign c ON c.campaign_id = a.campaign_id
+    GROUP BY ad_date, campaign_name, adset_name, media_source
+) SELECT campaign_name,
+       adset_name,
+       media_source,
+       sum(total_spend)             AS total_spend,
+       sum(total_impressions)       AS total_impressions,
+       sum(total_clicks)            AS total_clicks,
+       sum(total_value)             AS total_value,
+       (CASE
+            WHEN sum(total_clicks) = 0 THEN 0
+            ELSE sum(total_spend) / sum(total_clicks)
+        END)                        AS CPC,
+       (CASE
+            WHEN sum(total_impressions) = 0 THEN 0
+            ELSE sum(total_spend) * 1000 / sum(total_impressions)
+        END)                        AS CPM,
+       (CASE
+            WHEN sum(total_impressions) = 0 THEN 0
+            ELSE ROUND((1.0 * sum(total_clicks) / sum(total_impressions)) * 100, 3)
+        END)                        AS CTR,
+       (CASE
+            WHEN sum(total_spend) = 0 THEN 0
+            ELSE ROUND(((1.0 * sum(total_value) - sum(total_spend)) / sum(total_spend)) * 100, 3)
+        END)                        AS ROMI
+FROM segmented_performance
+GROUP BY campaign_name, adset_name, media_source
+ORDER BY ROMI DESC;
