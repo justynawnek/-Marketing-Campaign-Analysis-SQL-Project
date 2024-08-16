@@ -1,0 +1,60 @@
+-- UTM Campaign Analysis Query
+with fb_and_google as
+	(select ad_date
+		,url_parameters
+		,(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )	as media_source
+		,coalesce(spend, 0)	as spend
+		,coalesce(impressions, 0)	as impressions
+		,coalesce(reach, 0)	as reach
+		,coalesce(clicks, 0) as clicks
+		,coalesce(leads, 0) as leads
+		,coalesce(value, 0)	as value
+	from public.facebook_ads_basic_daily 														
+	union
+	select ad_date
+		,url_parameters
+		,(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )	as media_source
+		,coalesce(spend, 0)	as spend
+		,coalesce(impressions, 0)	as impressions
+		,coalesce(reach, 0)	as reach
+		,coalesce(clicks, 0) as clicks
+		,coalesce(leads, 0)	as leads
+		,coalesce(value, 0)	as value
+	from public.google_ads_basic_daily)
+SELECT ad_date
+		,media_source
+		,(CASE
+            WHEN (substring(url_parameters, 'utm_campaign=([^&]+)')) = 'nan' THEN NULL
+            ELSE LOWER(substring(url_parameters, '(?<=utm_campaign=)[^&]+'))
+        end) 	as utm_campaign
+		,sum (spend)	as total_spend 
+		,sum (impressions) as total_impressions
+		,sum (value)	as total_value
+		,sum (clicks) as total_clicks
+		,(case
+			when sum (clicks) = 0 then 0
+			else sum  (spend) / sum (clicks)
+		end	)	as CPC
+		,(case
+			when sum (impressions) = 0 then 0
+			else sum (spend) * 1000 / sum (impressions)
+		end	)	as CPM
+		,(case
+			when sum (clicks) = 0 then 0
+			else round (((1.0*sum (clicks) / sum (impressions))*100), 3)
+		end	) as CTR
+		,(case
+			when sum (spend) = 0 then 0
+			else round(((1.0*sum (value) - sum (spend)) /sum (spend)*100), 3) 
+		end	)	as ROMI
+from fb_and_google
+group by ad_date, media_source, utm_campaign
+order by ad_date, media_source;
