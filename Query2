@@ -1,0 +1,57 @@
+-- Media Source Comparison Query
+select ad_date,
+		media_source,
+		campaign_name,
+		adset_name,
+		sum (spend)									as total_spend, 
+		sum (impressions)						as total_impressions,
+		sum (value)									as total_value,
+		sum (clicks)								as total_clicks
+from (select *
+		from (SELECT ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+			when url_parameters like '%google%'
+				then 'google'
+				else 'facebook'	
+		end )																					as media_source
+		from public.facebook_ads_basic_daily a
+		inner join public.facebook_adset b on b.adset_id=a.adset_id 
+		inner join public.facebook_campaign c on c.campaign_id=a.campaign_id)					as facebook
+	union 
+	select ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )																				as media_source
+	from public.google_ads_basic_daily)															as g_and_f
+group by ad_date, media_source, campaign_name, adset_name
+order by ad_date, media_source, campaign_name, adset_name;
+
+
+
+-- Top Ad Set Query
+select adset_name,
+		sum (spend)																	as total_spend, 
+		round(((1.0* sum (value)- sum (spend)) /nullif (sum(spend),0))*100, 3) 	as ROMI
+from (select * 
+		from(SELECT ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+			when url_parameters like '%google%'
+				then 'google'
+				else 'facebook'	
+		end )			as media_source
+		from public.facebook_ads_basic_daily a
+		inner join public.facebook_adset b on b.adset_id=a.adset_id 
+		inner join public.facebook_campaign c on c.campaign_id=a.campaign_id)		as facebook
+	union 
+	select ad_date, spend, impressions, reach, clicks, leads, value, adset_name, campaign_name,
+		(case 
+				when url_parameters like '%google%'
+					then 'google'
+					else 'facebook'	
+			end )			as media_source
+	from public.google_ads_basic_daily)															as g_and_f
+group by adset_name
+having sum (spend)>500000
+order by ROMI desc;
