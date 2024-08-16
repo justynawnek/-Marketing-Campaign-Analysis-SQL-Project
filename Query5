@@ -1,0 +1,33 @@
+-- Campaign and Ad Set Trend Analysis Query
+WITH campaign_trends AS (
+    SELECT campaign_name,
+           adset_name,
+           ad_date,
+           EXTRACT(MONTH FROM ad_date) AS month,
+           EXTRACT(YEAR FROM ad_date)  AS year,
+           sum(spend)                  AS total_spend,
+           sum(impressions)            AS total_impressions,
+           sum(clicks)                 AS total_clicks,
+           sum(value)                  AS total_value
+    FROM public.facebook_ads_basic_daily a
+    INNER JOIN public.facebook_adset b ON b.adset_id = a.adset_id
+    INNER JOIN public.facebook_campaign c ON c.campaign_id = a.campaign_id
+    GROUP BY campaign_name, adset_name, ad_date, EXTRACT(MONTH FROM ad_date), EXTRACT(YEAR FROM ad_date)
+)SELECT campaign_name,
+       adset_name,
+       year,
+       month,
+       total_spend,
+       total_impressions,
+       total_clicks,
+       total_value,
+       LAG(total_spend) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_spend,
+       LAG(total_impressions) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_impressions,
+       LAG(total_clicks) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_clicks,
+       LAG(total_value) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month) AS prev_month_value,
+       (total_spend - LAG(total_spend) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_spend) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS spend_change_pct,
+       (total_impressions - LAG(total_impressions) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_impressions) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS impressions_change_pct,
+       (total_clicks - LAG(total_clicks) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_clicks) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS clicks_change_pct,
+       (total_value - LAG(total_value) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month)) / NULLIF(LAG(total_value) OVER (PARTITION BY campaign_name, adset_name ORDER BY year, month), 0) * 100 AS value_change_pct
+FROM campaign_trends
+ORDER BY campaign_name, adset_name, year, month;
